@@ -31,7 +31,7 @@ function HandleGoogleRedirect()
             async  function processOAuthResponse() {
                 setLoading(true);
                 try{
-                    const res = await axios.post("http://localhost:8081/oauth2/callback/google",{
+                    const res = await axios.post(`${BASEURL}/oauth2/callback/google`,{
                         code: code,
                         state: state,
                         scope: scope
