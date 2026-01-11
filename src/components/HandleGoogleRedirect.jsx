@@ -4,6 +4,8 @@ import { useEffect, useState } from "react";
 import axios from "axios";
 import ClipLoader from "react-spinners/ClipLoader";
 import { toast } from "react-toastify";
+import { BASEURL } from "../apiCall/BASEURL";
+
 
 //http://localhost:31237
 function HandleGoogleRedirect()
