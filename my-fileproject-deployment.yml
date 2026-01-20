@@ -1,0 +1,22 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: my-fileproject-deployment
+  namespace: my-fileproject-namespace
+  labels:
+    app: my-fileprojectfrontend-deploymentlabel
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app: my-fileprojectfrontend
+  template:
+    metadata:
+      labels:
+        app: my-fileprojectfrontend
+    spec:
+      containers:
+        - name: my-fileproject-container
+          image: sachhin961/myfileprojectfrontend
+          ports:
+            - containerPort: 3000

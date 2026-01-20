@@ -1,7 +1,11 @@
 import React, { useState, useRef } from 'react';
-import axios from 'axios';
 import toast from 'react-hot-toast';
-import { uploadFileUrl } from '../apiCall/UploadFileApi';
+import { uploadFileUrl } from '../apiCall/UploadFileApi'; 
+
+
+
+
+
 
 function UploadFile() {
   const [isDragging, setIsDragging] = useState(false);
@@ -11,7 +15,9 @@ function UploadFile() {
   const [uploadComplete, setuploadComplete] = useState(false);
   const [downloadLink, setdownloadLink] = useState("");
   const [uploadProgress, setUploadProgress] = useState(0);
+   
 
+  const isPaused = useRef(false);
 
   const handleDragOver = (e) => {
     e.preventDefault();
@@ -30,6 +36,7 @@ function UploadFile() {
     const droppedFile = e.dataTransfer.files[0];
     if (droppedFile) {
       setFile(droppedFile);
+      setUploadProgress(0); 
     }
   };
 
@@ -37,6 +44,7 @@ function UploadFile() {
     const selectedFile = e.target.files[0];
     if (selectedFile) {
       setFile(selectedFile);
+      setUploadProgress(0); 
     }
   };
 
@@ -44,29 +52,42 @@ function UploadFile() {
     fileInput.current.click();
   };
 
+ 
   const startUpload = async() => {
     if (!file) return;
 
+   
+    isPaused.current = false;
+
     const formData = {
-           fileName: file.name,
-           fileSize: file.size,
-           fileType: file.type
+            fileName: file.name,
+            fileSize: file.size,
+            fileType: file.type
       };
 
       const uploadToast = await uploadFileUrl(formData, 
-    file,
-    setIsUploading,
-    setUploadProgress,
-    setdownloadLink,
-    setuploadComplete);
+        file,
+        setIsUploading,
+        setUploadProgress,
+        setdownloadLink,
+        setuploadComplete,
+        isPaused
+    );
     
-    toast.success("File Uploaded Successfully");
+   
+  };
 
+ 
+  const handlePause = () => {
+    isPaused.current = true;
+  
   };
 
   const removeFile = () => {
     setFile(null);
     setIsUploading(false);
+    setUploadProgress(0);
+    isPaused.current = false;
   };
 
   return (
@@ -108,8 +129,13 @@ function UploadFile() {
                   </button>
                 </div>
               )}
-
-             
+              
+               <button 
+                  onClick={() => {setuploadComplete(false); removeFile();}}
+                  className="text-blue-500 hover:underline mt-4"
+               >
+                  Upload Another File
+               </button>
             </div>
           </div>
         </div>
@@ -179,19 +205,39 @@ function UploadFile() {
                 </p>
                 
                 {isUploading ? (
-                  <div className="flex items-center justify-center gap-3">
-                    <div className="w-5 h-5 border-2 border-blue-500 border-t-transparent rounded-full animate-spin"></div>
-                    <span className="text-gray-600">Uploading...</span>
-                    <span className = "text-gray-600">{uploadProgress} %</span>
+                 
+
+                  <div className="flex flex-col items-center justify-center gap-3">
+                    <div className="flex items-center gap-3">
+                        <div className="w-5 h-5 border-2 border-blue-500 border-t-transparent rounded-full animate-spin"></div>
+                        <span className="text-gray-600">Uploading... {uploadProgress}%</span>
+                    </div>
+                   
+                    <div className="w-full bg-gray-200 rounded-full h-2.5 max-w-xs mt-1">
+                        <div className="bg-blue-600 h-2.5 rounded-full" style={{ width: `${uploadProgress}%` }}></div>
+                    </div>
+
+                    <button 
+                        onClick={handlePause}
+                        className="text-sm font-medium text-amber-600 hover:text-amber-700 hover:underline mt-2"
+                    >
+                        Pause Upload
+                    </button>
                   </div>
                 ) : (
+                  
                   <div className="flex gap-3 justify-center">
                     <button
                       onClick={startUpload}
-                      className="bg-green-500 text-white px-4 py-2 rounded hover:bg-green-600"
+                      className={`px-4 py-2 rounded text-white ${
+                        uploadProgress > 0 
+                        ? "bg-amber-500 hover:bg-amber-600" 
+                        : "bg-green-500 hover:bg-green-600" 
+                      }`}
                     >
-                      Upload File
+                      {uploadProgress > 0 ? "Resume Upload" : "Upload File"}
                     </button>
+                    
                     <button
                       onClick={removeFile}
                       className="bg-gray-200 text-gray-700 px-4 py-2 rounded hover:bg-gray-300"
@@ -204,10 +250,10 @@ function UploadFile() {
             )}
           </div>
 
-          {/* Help text */}
+          
           <div className="mt-4 text-center">
             <p className="text-gray-500 text-sm">
-              Supports all file types up to 5GB
+              Supports all file types up to 50GB
             </p>
           </div>
         </div>

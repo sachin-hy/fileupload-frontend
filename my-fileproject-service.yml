@@ -1,0 +1,13 @@
+kind: Service
+apiVersion: v1
+metadata:
+  name: my-fileproject-service
+  namespace: my-fileproject-namespace
+spec:
+  selector:
+     app: my-fileprojectfrontend
+  ports:
+    - protocol: TCP
+      port: 4040  # port visible to external users
+      targetPort: 3000 # port on which the container is running
+  type: ClusterIP

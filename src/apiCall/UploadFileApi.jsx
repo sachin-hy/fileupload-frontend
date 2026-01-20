@@ -10,29 +10,66 @@ export const uploadFileUrl = async (formData,
     setIsUploading,
     setUploadProgress,
     setdownloadLink,
-    setuploadComplete
+    setuploadComplete,
+    isPaused
 ) => {
     try{
-         const res = await axios.post(`${BASEURL}/uploadId`, formData,
+         setIsUploading(true);
+
+        const fileKey = `uploadState_${file.name}_${file.size}_${file.lastModified}`;
+
+
+        const existingUpload = localStorage.getItem(fileKey);
+        
+    
+        if(!existingUpload)
         {
-            headers:{
-              Authorization : `Bearer ${localStorage.getItem("token")}`
-            }
-          }
-     );
+              const res = await axios.post(`${BASEURL}/uploadId`, formData,
+              {
+                headers:{
+                   Authorization : `Bearer ${localStorage.getItem("token")}`
+                  }
+              }
+            );
 
-       const {uploadId, s3Key ,chunkSize, totalChunk} = res.data;
+            const {uploadId, s3Key ,chunkSize, totalChunk} = res.data;
 
-        getPresignedUrl(uploadId,
-          s3Key,
-          chunkSize, 
-          totalChunk,
-          setIsUploading,
-          setUploadProgress,
-          file,
-          setdownloadLink,
-          setuploadComplete
-        );
+      
+       
+            localStorage.setItem(fileKey, JSON.stringify({uploadId, 
+             s3Key,
+             chunkSize, 
+             totalChunk, 
+              uploadParts:[]
+            }));
+
+           getPresignedUrl(uploadId,
+            s3Key,
+            chunkSize, 
+            totalChunk,
+            setIsUploading,
+            setUploadProgress,
+            file,
+            setdownloadLink,
+            setuploadComplete,
+            fileKey,
+            isPaused
+           );
+        }else{
+          const uploadState = JSON.parse(existingUpload);
+          getPresignedUrl(uploadState.uploadId,
+            uploadState.s3Key,
+            uploadState.chunkSize,
+            uploadState.totalChunk,
+            setIsUploading,
+            setUploadProgress,
+            file,
+            setdownloadLink,
+            setuploadComplete,
+            fileKey,
+            isPaused
+            );
+        }
 
     }catch(e)
     {
@@ -55,20 +92,45 @@ export const getPresignedUrl = async (uploadId,
           setUploadProgress,
           file,
           setdownloadLink,
-          setuploadComplete
+          setuploadComplete,
+          fileKey,
+          isPaused
     ) => {
  
     try{
-     const etags = [];
-     setIsUploading(true);
-     setUploadProgress(0);
 
-     // console.log("Starting upload in chunks with s3Key = " , s3Key);
+      
+      let uploadState = JSON.parse(localStorage.getItem(fileKey));
+
+       // set coontains part number already uploaded
+     const uploadedPartSet = new Set(uploadState.uploadParts.map(p => p.partNumber));
+     
+     const etags =[...uploadState.uploadParts].sort((a,b)  => a.partNumber - b.partNumber);
+    
+     const uploadedPartCount = uploadState.uploadParts.length;
+
+     
+     setUploadProgress(Math.round((uploadedPartCount/totalChunk)*100));
+
+    
+    // console.log("Starting upload in chunks with s3Key = " , s3Key);
       for(let i = 0; i < totalChunk; i = i + 1)
      {
         
         const start = i * chunkSize;
         const end = Math.min(file.size, (i+1) * chunkSize);
+
+        if(uploadedPartSet.has(i + 1))
+        {
+           continue;
+        }
+
+        if(isPaused.current)
+        {
+           console.log("Upload Paused by user");
+           setIsUploading(false);
+           return;
+        }
 
         const chunk = file.slice(start , end);
         
@@ -83,46 +145,37 @@ export const getPresignedUrl = async (uploadId,
             }
           });
      
-           const {url} = urlResponse.data;
-        
-          /// console.log("presigned url = " , url);
-       
-
-           
-           
-          const  res = await fetch(url, {
-               method: 'PUT',
-               body: chunk
-              });
-          // }catch(error)
-          // {
-          //   console.error("Error uploading chunk:", error);
-          //   setIsUploading(false);
-          //   toast.error("Error uploading file chunk. Please try again.");
+        const {url} = urlResponse.data;
+          
+ 
+        const res = await retryUploadChunk(url, chunk, 4);
+          
             
-          //   return;
-          // }
-         
+      
         const etag = res.headers.get('ETag');
-        
-        //console.log("etag recived  = " , etag);
-        // const freshEtag = etag?.replace(/"/g, '');
-        
-        
+        uploadState.uploadParts.push({partNumber: i + 1, etag: etag});
+        localStorage.setItem(fileKey, JSON.stringify(uploadState));
+
         etags.push({partNumber: i + 1, etag: etag});
         
-        setUploadProgress(Math.round(((i+1)/totalChunk)*100));
+        const uploadedCount = uploadState.uploadParts.length;
+        setUploadProgress(Math.round((uploadedCount/totalChunk)*100));
+
      }
 
-
-
+     if(!isPaused.current){
+       
+       etags.sort((a,b) => a.partNumber - b.partNumber);
+       
         completeUpload(etags,
            uploadId,
            s3Key,
            setIsUploading,
            setdownloadLink,
-           setuploadComplete
+           setuploadComplete,
+           fileKey
           );
+        }
 
     }catch(e)
     {
@@ -134,13 +187,55 @@ export const getPresignedUrl = async (uploadId,
 
 
 
+
+const retryUploadChunk = async (url, chunk, maxRetries) => {
+  let attempt = 1;
+
+  while (attempt <= maxRetries) {
+    try {
+      const res = await fetch(url, {
+        method: "PUT",
+        body: chunk,
+      });
+
+      if (res.ok) {
+        return res;
+      }
+
+      
+      // if the url  expired or unauthorized then we stop retrying
+      // and throw error
+      if (res.status === 403 || res.status === 401) {
+        throw new Error("Presigned URL expired or unauthorized");
+      }
+
+      throw new Error(`Upload failed with status ${res.status}`);
+    } catch (err) {
+      
+      
+      if (attempt === maxRetries) {
+        throw err;
+      }
+
+      // wait for some time before retrying
+      await new Promise(resolve =>
+        setTimeout(resolve, attempt * 1000)
+      );
+
+      attempt++;
+    }
+  }
+};
+
+
+
 export const completeUpload = async(etags,
     uploadId,
     s3Key,
     setIsUploading,
     setdownloadLink,
-    setuploadComplete
-
+    setuploadComplete,
+    fileKey
 ) => {
 
     try{
@@ -168,7 +263,7 @@ export const completeUpload = async(etags,
     
     setdownloadLink(downloadUrl);
     setuploadComplete(true);
-   
+    localStorage.removeItem(fileKey);
     toast.success("File uploaded successfully!");
    }catch(error)
    {
