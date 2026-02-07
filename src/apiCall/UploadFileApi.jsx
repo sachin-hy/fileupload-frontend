@@ -41,7 +41,7 @@ export const uploadFileUrl = async (formData,
              chunkSize, 
              totalChunk, 
               uploadParts:[]
-            }));
+             }));
 
            getPresignedUrl(uploadId,
             s3Key,
@@ -83,108 +83,95 @@ export const uploadFileUrl = async (formData,
 
 
 
-
-export const getPresignedUrl = async (uploadId,
-          s3Key,
-          chunkSize, 
-          totalChunk,
-          setIsUploading,
-          setUploadProgress,
-          file,
-          setdownloadLink,
-          setuploadComplete,
-          fileKey,
-          isPaused
-    ) => {
- 
-    try{
-
-      
-      let uploadState = JSON.parse(localStorage.getItem(fileKey));
-
-       // set coontains part number already uploaded
-     const uploadedPartSet = new Set(uploadState.uploadParts.map(p => p.partNumber));
-     
-     const etags =[...uploadState.uploadParts].sort((a,b)  => a.partNumber - b.partNumber);
-    
-     const uploadedPartCount = uploadState.uploadParts.length;
-
-     
-     setUploadProgress(Math.round((uploadedPartCount/totalChunk)*100));
-
-    
-    // console.log("Starting upload in chunks with s3Key = " , s3Key);
-      for(let i = 0; i < totalChunk; i = i + 1)
-     {
+export const getPresignedUrl = async (
+    uploadId, s3Key, chunkSize, totalChunk,
+    setIsUploading, setUploadProgress, file,
+    setdownloadLink, setuploadComplete, fileKey, isPaused
+) => {
+    try {
+        let uploadState = JSON.parse(localStorage.getItem(fileKey));
+        const uploadedPartSet = new Set(uploadState.uploadParts.map(p => p.partNumber));
+        const etags = [...uploadState.uploadParts];
         
-        const start = i * chunkSize;
-        const end = Math.min(file.size, (i+1) * chunkSize);
+        const CONCURRENCY_LIMIT = 5;
+        const activeTasks = new Set();
+        const queue = []; 
 
-        if(uploadedPartSet.has(i + 1))
-        {
-           continue;
-        }
-
-        if(isPaused.current)
-        {
-           console.log("Upload Paused by user");
-           setIsUploading(false);
-           return;
-        }
-
-        const chunk = file.slice(start , end);
         
-        const urlResponse = await axios.post(`${BASEURL}/presignedurl`,{
-            partNumber: i + 1,
-            uploadId : uploadId,
-            s3Key: s3Key
-        },
-          {
-            headers:{
-              Authorization : `Bearer ${localStorage.getItem("token")}`
+        for (let i = 0; i < totalChunk; i++) {
+            if (!uploadedPartSet.has(i + 1)) {
+                queue.push(i);
             }
-          });
-     
-        const {url} = urlResponse.data;
-          
- 
-        const res = await retryUploadChunk(url, chunk, 4);
-          
-            
-      
-        const etag = res.headers.get('ETag');
-        uploadState.uploadParts.push({partNumber: i + 1, etag: etag});
-        localStorage.setItem(fileKey, JSON.stringify(uploadState));
-
-        etags.push({partNumber: i + 1, etag: etag});
-        
-        const uploadedCount = uploadState.uploadParts.length;
-        setUploadProgress(Math.round((uploadedCount/totalChunk)*100));
-
-     }
-
-     if(!isPaused.current){
-       
-       etags.sort((a,b) => a.partNumber - b.partNumber);
-       
-        completeUpload(etags,
-           uploadId,
-           s3Key,
-           setIsUploading,
-           setdownloadLink,
-           setuploadComplete,
-           fileKey
-          );
         }
 
-    }catch(e)
-    {
-       toast.error("SomeThing went wrong!Please try again later.");
-       setIsUploading(false);
+       
+        const uploadNext = async () => {
+            if (queue.length === 0 || isPaused.current) return;
 
+            const i = queue.shift();
+            const start = i * chunkSize;
+            const end = Math.min(file.size, (i + 1) * chunkSize);
+            const chunk = file.slice(start, end);
+            const BATCH_SIZE = 10;
+            
+            const task = (async () => {
+                try {
+                    const urlResponse = await axios.post(`${BASEURL}/presignedurl`, {
+                        partNumber: i + 1,
+                        uploadId,
+                        s3Key
+                    }, {
+                        headers: { Authorization: `Bearer ${localStorage.getItem("token")}` }
+                    });
+
+                    const { url } = urlResponse.data;
+                    const res = await retryUploadChunk(url, chunk, 4);
+                    const etag = res.headers.get('ETag');
+
+                  
+                    const partInfo = { partNumber: i + 1, etag };
+                    etags.push(partInfo);
+                    uploadState.uploadParts.push(partInfo);
+
+                    // only updating localstorage only if the 
+                    // the batch size reach
+                    // to reduce writing every time
+                    if (uploadState.uploadParts.length % BATCH_SIZE === 0 || 
+                         uploadState.uploadParts.length === totalChunk) {
+                       localStorage.setItem(fileKey, JSON.stringify(uploadState));
+                    }
+
+                    setUploadProgress(Math.round((etags.length / totalChunk) * 100));
+                } finally {
+                    activeTasks.delete(task); 
+                }
+            })();
+
+            activeTasks.add(task);
+            return task;
+        };
+
+       
+        while (queue.length > 0 && !isPaused.current) {
+            if (activeTasks.size < CONCURRENCY_LIMIT) {
+                uploadNext(); 
+            } else {
+                await Promise.race(activeTasks);
+            }
+        }
+
+        await Promise.all(activeTasks);
+
+        if (!isPaused.current) {
+            etags.sort((a, b) => a.partNumber - b.partNumber);
+            completeUpload(etags, uploadId, s3Key, setIsUploading, setdownloadLink, setuploadComplete, fileKey);
+        }
+
+    } catch (e) {
+        toast.error("Parallel upload failed. Please try again later.");
+        setIsUploading(false);
     }
-}
-
+};
 
 
 
@@ -280,3 +267,9 @@ export const completeUpload = async(etags,
       setIsUploading(false);
     }
 }
+
+
+
+
+
+
