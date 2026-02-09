@@ -153,6 +153,11 @@ export const getPresignedUrl = async (
 
        
         while (queue.length > 0 && !isPaused.current) {
+           if (isPaused.current) {
+                await new Promise(resolve => setTimeout(resolve, 1000)); 
+                continue; 
+            }
+
             if (activeTasks.size < CONCURRENCY_LIMIT) {
                 uploadNext(); 
             } else {

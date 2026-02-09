@@ -80,7 +80,7 @@ function UploadFile() {
  
   const handlePause = () => {
     isPaused.current = true;
-  
+    setIsUploading(false);
   };
 
   const removeFile = () => {
